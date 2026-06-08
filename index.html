@@ -59,10 +59,36 @@ function ForestGame(){
 
   useEffect(()=>{setIsMobile('ontouchstart' in window||navigator.maxTouchPoints>0);},[]);
   useEffect(()=>{const resize=()=>{const c=canvasRef.current;if(!c)return;c.width=window.innerWidth;c.height=window.innerHeight;};resize();window.addEventListener("resize",resize);return()=>window.removeEventListener("resize",resize);},[]);
-  useEffect(()=>{const kd=e=>{G.current.keys[e.code]=true;if(["Space","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.code))e.preventDefault();};const ku=e=>{G.current.keys[e.code]=false;};window.addEventListener("keydown",kd);window.addEventListener("keyup",ku);return()=>{window.removeEventListener("keydown",kd);window.removeEventListener("keyup",ku);};},[]);
+  useEffect(()=>{
+    const kd=e=>{
+      // БЛОКИРУЕМ ВСЕ КЛАВИШИ УПРАВЛЕНИЯ, ЧТОБЫ НЕ ПРОИСХОДИЛА ПРОКРУТКА/ВВОД
+      const controlKeys = ["Space","ArrowUp","ArrowDown","ArrowLeft","ArrowRight","KeyW","KeyA","KeyS","KeyD","KeyE"];
+      if(controlKeys.includes(e.code)){
+        e.preventDefault();
+      }
+      G.current.keys[e.code]=true;
+    };
+    const ku=e=>{
+      G.current.keys[e.code]=false;
+    };
+    window.addEventListener("keydown",kd);
+    window.addEventListener("keyup",ku);
+    return()=>{
+      window.removeEventListener("keydown",kd);
+      window.removeEventListener("keyup",ku);
+    };
+  },[]);
   useEffect(()=>{const canvas=canvasRef.current;if(!canvas)return;const getPos=t=>{const rect=canvas.getBoundingClientRect(),sx=canvas.width/rect.width,sy=canvas.height/rect.height,cx=(t.clientX-rect.left)*sx,cy=(t.clientY-rect.top)*sy,g=G.current;return{cx,cy,wx:cx+g.cam.x,wy:cy+g.cam.y};};const onStart=e=>{e.preventDefault();const p=getPos(e.touches[0]);const g=G.current;g.touch={active:true,...p};g.ripples.push({cx:p.cx,cy:p.cy,radius:4,life:1});};const onMove=e=>{e.preventDefault();const p=getPos(e.touches[0]);G.current.touch={active:true,...p};};const onEnd=e=>{e.preventDefault();G.current.touch.active=false;};canvas.addEventListener("touchstart",onStart,{passive:false});canvas.addEventListener("touchmove",onMove,{passive:false});canvas.addEventListener("touchend",onEnd,{passive:false});canvas.addEventListener("touchcancel",onEnd,{passive:false});return()=>{canvas.removeEventListener("touchstart",onStart);canvas.removeEventListener("touchmove",onMove);canvas.removeEventListener("touchend",onEnd);canvas.removeEventListener("touchcancel",onEnd);};},[]);
 
-  const handleDonate=()=>{const g=G.current;if(g.logs===0||!g.nearAltar)return;triggerDonate(g,setLogs,setDonated,setDonateAnim);};
+  // БЕЗОПАСНАЯ КНОПКА ПОЖЕРТВОВАНИЯ С ЗАЩИТОЙ ОТ СПАМА
+  const handleDonate=()=>{
+    const g = G.current;
+    const now = Date.now();
+    if(!g.nearAltar || g.logs===0) return;
+    if(g.lastDonate && now - g.lastDonate < 800) return;
+    g.lastDonate = now;
+    triggerDonate(g, setLogs, setDonated, setDonateAnim);
+  };
 
   useEffect(()=>{
     const canvas=canvasRef.current,ctx=canvas.getContext("2d");
