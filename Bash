@@ -1,5 +1,0 @@
-git clone https://github.com/nataliakra4ovska/forest/
-cd forest-game
-
-npm create vite@latest . -- --template react
-npm install
