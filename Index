@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>🌲 Forest Game</title>
+  <style>*{margin:0;padding:0;box-sizing:border-box;}body{overflow:hidden;background:#111a0f;}</style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+const TILE=64,WORLD_W=42,WORLD_H=32,SPEED=2.8,TREE_COUNT=35;
+const CHOP_RANGE=72,CHOP_COOLDOWN=550,DONATE_RANGE=95;
+const ALTAR_TX=10,ALTAR_TY=8;
+const ALTAR_X=ALTAR_TX*TILE+TILE/2,ALTAR_Y=ALTAR_TY*TILE+TILE/2;
+
+function mulberry32(seed){return()=>{seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function buildWorld(rng){const tiles=[];for(let y=0;y<WORLD_H;y++){tiles[y]=[];for(let x=0;x<WORLD_W;x++){const n=rng();tiles[y][x]=n<0.12?1:n<0.18?2:0;}}return tiles;}
+function buildTrees(rng){const trees=[],cx=WORLD_W/2,cy=WORLD_H/2;for(let i=0;i<TREE_COUNT*4&&trees.length<TREE_COUNT;i++){const tx=2+Math.floor(rng()*(WORLD_W-4)),ty=2+Math.floor(rng()*(WORLD_H-4));if(Math.abs(tx-cx)<4&&Math.abs(ty-cy)<4)continue;if(Math.abs(tx-ALTAR_TX)<4&&Math.abs(ty-ALTAR_TY)<4)continue;let ok=true;for(const t of trees)if(Math.abs(t.tx-tx)<2&&Math.abs(t.ty-ty)<2){ok=false;break;}if(!ok)continue;const size=0.75+rng()*0.5;trees.push({id:trees.length,tx,ty,x:tx*TILE+TILE/2,y:ty*TILE+TILE/2,health:3,maxHealth:3,chopped:false,chopAnim:0,size,leafColor:rng()>0.3?0:1});}return trees;}
+
+function drawGrass(ctx,tiles,camX,camY,W,H){const PAL=["#4e8a53","#52965a","#478549","#3f7a44"];const s0=Math.floor(camX/TILE),e0=Math.ceil((camX+W)/TILE),s1=Math.floor(camY/TILE),e1=Math.ceil((camY+H)/TILE);for(let ty=s1;ty<=e1;ty++)for(let tx=s0;tx<=e0;tx++){const row=tiles[Math.max(0,Math.min(ty,WORLD_H-1))];const v=row?row[Math.max(0,Math.min(tx,WORLD_W-1))]:0;const sx=tx*TILE-camX,sy=ty*TILE-camY;ctx.fillStyle=PAL[v]??PAL[0];ctx.fillRect(sx,sy,TILE,TILE);if(v===1){ctx.fillStyle="#6abf70";[[6,8],[14,15],[22,7],[40,18],[50,10]].forEach(([ox,oy])=>ctx.fillRect(sx+ox,sy+oy,3,6));}else if(v===2){ctx.fillStyle="#3d6941";for(let i=0;i<3;i++){ctx.beginPath();ctx.arc(sx+10+i*20,sy+10+i*14,4,0,Math.PI*2);ctx.fill();}}}}
+
+function drawAltarGround(ctx,sx,sy){ctx.fillStyle="#c9b06a";ctx.beginPath();ctx.ellipse(sx,sy+6,52,24,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#d4bc7a";ctx.beginPath();ctx.ellipse(sx-4,sy+2,38,17,0,0,Math.PI*2);ctx.fill();}
+function drawAltarStones(ctx,sx,sy){const SC=["#8a8a8a","#9e9e9e","#707070","#b0b0b0"];for(let i=0;i<8;i++){const a=(i/8)*Math.PI*2-0.2,r=34,px=sx+Math.cos(a)*r,py=sy+8+Math.sin(a)*r*0.42;ctx.fillStyle=SC[i%4];ctx.beginPath();ctx.ellipse(px,py,9,6,a*0.4,0,Math.PI*2);ctx.fill();ctx.fillStyle="rgba(255,255,255,0.15)";ctx.beginPath();ctx.ellipse(px-2,py-1,4,2.5,a*0.4,0,Math.PI*2);ctx.fill();}}
+function drawFire(ctx,sx,sy,intensity,ts){const t=ts*0.004,h=22+intensity*18;const grd=ctx.createRadialGradient(sx,sy-10,2,sx,sy,55+intensity*20);grd.addColorStop(0,`rgba(255,140,0,${0.22+intensity*0.12})`);grd.addColorStop(0.5,`rgba(255,80,0,${0.08+intensity*0.06})`);grd.addColorStop(1,"rgba(255,60,0,0)");ctx.fillStyle=grd;ctx.beginPath();ctx.arc(sx,sy,75+intensity*20,0,Math.PI*2);ctx.fill();const flames=[{col:"#cc2200",alpha:0.75,hw:13,ph:1.0,count:3},{col:"#ff5500",alpha:0.85,hw:10,ph:0.80,count:3},{col:"#ff9900",alpha:0.90,hw:7,ph:0.60,count:2},{col:"#ffdd00",alpha:0.90,hw:4,ph:0.40,count:1}];for(let fi=0;fi<flames.length;fi++){const{col,alpha,hw,ph,count}=flames[fi];ctx.fillStyle=col;for(let f=0;f<count;f++){const ox=Math.sin(t*(1.4+f*0.4)+f*2.1+fi)*6,sw=Math.sin(t*(1.9+f*0.6)+fi*1.2)*hw*0.35,fh=h*ph*(0.82+Math.sin(t*(2.1+f*0.8)+fi*1.5)*0.18);ctx.globalAlpha=alpha*(0.85+Math.sin(t+f+fi)*0.15);ctx.beginPath();ctx.moveTo(sx+ox-hw+sw,sy-4);ctx.quadraticCurveTo(sx+ox+sw+3,sy-4-fh*0.7,sx+ox+sw,sy-4-fh);ctx.quadraticCurveTo(sx+ox+sw-3,sy-4-fh*0.7,sx+ox+hw+sw,sy-4);ctx.fill();}}ctx.fillStyle="#fff8e0";ctx.globalAlpha=0.75;ctx.beginPath();ctx.ellipse(sx+Math.sin(t*3)*2,sy-6,3,4,0,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;for(let i=0;i<7;i++){const et=((ts*0.0009+i*0.3)%1),ex=sx+Math.sin(i*1.9+ts*0.0025)*12,ey=sy-6-et*50,ea=(1-et/0.9)*0.85;if(et<0.9&&ea>0){ctx.globalAlpha=ea;ctx.fillStyle=et<0.4?"#ffaa00":"#ff5500";const es=1.5+Math.sin(i*2.3)*0.8;ctx.fillRect(ex-es,ey-es,es*2,es*2);}}ctx.globalAlpha=1;}
+function drawAltar(ctx,altar,camX,camY,ts){const sx=altar.x-camX,sy=altar.y-camY;if(sx<-120||sx>ctx.canvas.width+120||sy<-160||sy>ctx.canvas.height+60)return;drawAltarGround(ctx,sx,sy);ctx.fillStyle="#5a3518";ctx.fillRect(sx-16,sy-2,32,12);ctx.fillStyle="#6b4226";ctx.fillRect(sx-12,sy-4,24,10);ctx.fillStyle="#8b5a35";ctx.fillRect(sx-8,sy-3,16,7);drawAltarStones(ctx,sx,sy);drawFire(ctx,sx,sy-2,Math.min(1,altar.flare+0.3),ts);ctx.fillStyle="#5a3518";ctx.fillRect(sx+24,sy-72,4,44);ctx.fillStyle="#7a4a22";ctx.fillRect(sx+8,sy-78,48,20);ctx.fillStyle="#4a2a10";ctx.fillRect(sx+10,sy-76,44,16);ctx.fillStyle="#f5c870";ctx.font="bold 6px 'Press Start 2P',monospace";ctx.textAlign="center";ctx.fillText("ЖЕРТВ.",sx+32,sy-65);ctx.textAlign="left";if(altar.donated>0){ctx.fillStyle="rgba(0,0,0,0.6)";ctx.fillRect(sx-22,sy-100,44,16);ctx.fillStyle="#ffe090";ctx.font="7px 'Press Start 2P',monospace";ctx.textAlign="center";ctx.fillText(altar.donated+" 🔥",sx,sy-88);ctx.textAlign="left";}}
+
+function drawTree(ctx,tree,camX,camY){const sx=tree.x-camX,sy=tree.y-camY,s=tree.size;const shake=tree.chopAnim>0?Math.sin(tree.chopAnim*0.8)*4*(tree.chopAnim/10):0;if(tree.chopped){ctx.fillStyle="#6b4226";ctx.fillRect(sx-10,sy-4,20,12);ctx.fillStyle="#8b5a35";ctx.fillRect(sx-7,sy-2,14,8);ctx.strokeStyle="#7a4a28";ctx.lineWidth=1;ctx.beginPath();ctx.arc(sx,sy+2,3,0,Math.PI*2);ctx.stroke();ctx.beginPath();ctx.arc(sx,sy+2,6,0,Math.PI*2);ctx.stroke();return;}ctx.fillStyle="rgba(0,0,0,0.22)";ctx.beginPath();ctx.ellipse(sx+shake*0.2,sy+8,22*s,9*s,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#6b4226";ctx.fillRect(sx-9*s+shake,sy-18*s,18*s,32*s);ctx.fillStyle="#8b5a35";ctx.fillRect(sx-5*s+shake,sy-15*s,8*s,26*s);ctx.fillStyle="#5a3518";ctx.fillRect(sx+3*s+shake,sy-15*s,3*s,26*s);const lc=tree.leafColor===0?["#1b4332","#2d6a4f","#40916c","#52b788"]:["#2d4a1e","#4a7c3c","#6aad58","#8fd670"];const cx0=sx+shake,cy0=sy-32*s,r0=28*s,r1=22*s,r2=16*s;ctx.fillStyle=lc[0];ctx.beginPath();ctx.arc(cx0,cy0,r0,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(cx0-16*s,cy0+10*s,r0*0.75,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(cx0+16*s,cy0+10*s,r0*0.75,0,Math.PI*2);ctx.fill();ctx.fillStyle=lc[1];ctx.beginPath();ctx.arc(cx0-2,cy0-4,r1,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(cx0-14*s,cy0+6*s,r1*0.8,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(cx0+14*s,cy0+6*s,r1*0.8,0,Math.PI*2);ctx.fill();ctx.fillStyle=lc[2];ctx.beginPath();ctx.arc(cx0-4,cy0-6,r2,0,Math.PI*2);ctx.fill();ctx.fillStyle=lc[3];ctx.globalAlpha=0.55;ctx.beginPath();ctx.arc(cx0-8,cy0-14,r2*0.45,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;if(tree.health<tree.maxHealth){const bx=sx-22,by=sy-68*s;ctx.fillStyle="#300";ctx.fillRect(bx,by,44,7);ctx.fillStyle=tree.health===1?"#e74c3c":"#2ecc71";ctx.fillRect(bx,by,44*(tree.health/tree.maxHealth),7);ctx.strokeStyle="#000";ctx.lineWidth=1;ctx.strokeRect(bx,by,44,7);}}
+
+function drawPlayer(ctx,px,py,state){const{facing,walkFrame,chopAnim,vx,vy}=state;const bob=(vx||vy)?Math.sin(walkFrame*0.55)*2.5:0;const x=Math.round(px),y=Math.round(py+bob);ctx.fillStyle="rgba(0,0,0,0.25)";ctx.beginPath();ctx.ellipse(x,py+22,13,5,0,0,Math.PI*2);ctx.fill();const sw=chopAnim>0?Math.sin(chopAnim*0.5):0;const legSwing=(vx||vy)?Math.sin(walkFrame*0.55)*7:0;ctx.fillStyle="#2c4a8a";ctx.fillRect(x-8,y+10+legSwing,8,13);ctx.fillRect(x,y+10-legSwing,8,13);ctx.fillStyle="#1a2f60";ctx.fillRect(x-8,y+20+legSwing,8,3);ctx.fillRect(x,y+20-legSwing,8,3);ctx.fillStyle="#5b8dd9";ctx.fillRect(x-11,y-10,22,22);ctx.fillStyle="#3a70c0";ctx.fillRect(x-11,y-10,22,4);ctx.fillStyle="#7aaae8";ctx.fillRect(x-9,y-8,6,10);if(chopAnim>0){const armAngle=-0.8+sw*1.8;ctx.save();ctx.translate(x+13,y-4);ctx.rotate(armAngle);ctx.fillStyle="#f5c5a0";ctx.fillRect(-3,-5,6,16);ctx.fillStyle="#8b5a35";ctx.fillRect(-2,-22,4,24);ctx.fillStyle="#aaaaaa";ctx.fillRect(-8,-28,16,10);ctx.fillStyle="#cccccc";ctx.fillRect(-6,-27,8,7);ctx.fillStyle="#888";ctx.fillRect(-8,-28,5,10);ctx.restore();ctx.save();ctx.translate(x-13,y-4);ctx.rotate(-armAngle*0.3);ctx.fillStyle="#f5c5a0";ctx.fillRect(-3,-5,6,14);ctx.restore();}else{ctx.fillStyle="#f5c5a0";ctx.fillRect(x-17,y-8,6,14);ctx.fillRect(x+11,y-8,6,14);}ctx.fillStyle="#f5c5a0";ctx.fillRect(x-9,y-26,18,18);ctx.fillStyle="#e8b090";ctx.fillRect(x-9,y-10,18,2);ctx.fillStyle="#2c1a0e";if(facing!=="up"){const ey=y-21;ctx.fillRect(x-6,ey,3,3);ctx.fillRect(x+3,ey,3,3);ctx.fillStyle="#fff";ctx.fillRect(x-5,ey,1,1);ctx.fillRect(x+4,ey,1,1);}ctx.fillStyle="#4a2c0e";ctx.fillRect(x-9,y-26,18,6);ctx.fillRect(x-11,y-24,3,10);if(facing!=="up")ctx.fillRect(x+8,y-26,3,8);ctx.fillRect(x-9,y-28,18,3);}
+function drawLog(ctx,lx,ly,r){ctx.save();ctx.translate(lx,ly);ctx.rotate(r);ctx.fillStyle="#6b4226";ctx.fillRect(-12,-5,24,10);ctx.fillStyle="#8b5a35";ctx.fillRect(-10,-4,20,8);ctx.fillStyle="#c0956a";ctx.beginPath();ctx.ellipse(-12,0,5,8,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#a07040";ctx.beginPath();ctx.ellipse(-12,0,3,5,0,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.ellipse(12,0,5,8,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#a07040";ctx.beginPath();ctx.ellipse(12,0,3,5,0,0,Math.PI*2);ctx.fill();ctx.restore();}
+function drawRipples(ctx,ripples,dt){for(let i=ripples.length-1;i>=0;i--){const r=ripples[i];r.life-=dt/500;r.radius+=dt*0.12;if(r.life<=0){ripples.splice(i,1);continue;}ctx.strokeStyle=`rgba(255,240,100,${r.life*0.8})`;ctx.lineWidth=2;ctx.beginPath();ctx.arc(r.cx,r.cy,r.radius,0,Math.PI*2);ctx.stroke();}ctx.lineWidth=1;}
+function drawTargetMarker(ctx,cx,cy,ts){const pulse=0.5+0.5*Math.sin(ts*0.012),sz=8+pulse*3;ctx.strokeStyle=`rgba(255,240,80,${0.5+pulse*0.5})`;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(cx-sz,cy);ctx.lineTo(cx+sz,cy);ctx.stroke();ctx.beginPath();ctx.moveTo(cx,cy-sz);ctx.lineTo(cx,cy+sz);ctx.stroke();ctx.beginPath();ctx.arc(cx,cy,4,0,Math.PI*2);ctx.fill();}
+
+function triggerDonate(g,setLogs,setDonated,setDonateAnim){const count=g.logs;if(count===0)return;g.logs=0;setLogs(0);g.altar.donated+=count;setDonated(g.altar.donated);setDonateAnim(a=>a+1);g.altar.flare=Math.min(1,g.altar.flare+count*0.35);for(let i=0;i<count;i++){g.donateLogs.push({sx:g.player.x,sy:g.player.y-10,progress:0,delay:i*180,rot:(Math.random()-0.5)*1.2,height:55+Math.random()*40});}}
+
+function ForestGame(){
+  const canvasRef=useRef(null);
+  const [logs,setLogs]=useState(0);
+  const [donated,setDonated]=useState(0);
+  const [logAnim,setLogAnim]=useState(0);
+  const [donateAnim,setDonateAnim]=useState(0);
+  const [nearTree,setNearTree]=useState(false);
+  const [nearAltar,setNearAltar]=useState(false);
+  const [isMobile,setIsMobile]=useState(false);
+  const animRef=useRef(null);
+  const G=useRef({
+    player:{x:(WORLD_W/2)*TILE,y:(WORLD_H/2)*TILE,vx:0,vy:0,facing:"down",walkFrame:0,walkTimer:0,chopAnim:0},
+    trees:buildTrees(mulberry32(99)),tiles:buildWorld(mulberry32(7)),
+    cam:{x:0,y:0},keys:{},logs:0,particles:[],droppedLogs:[],donateLogs:[],
+    lastChop:0,lastDonate:0,altar:{x:ALTAR_X,y:ALTAR_Y,donated:0,flare:0},
+    nearTree:false,nearAltar:false,touch:{active:false,wx:0,wy:0,cx:0,cy:0},ripples:[],
+  });
+
+  useEffect(()=>{setIsMobile('ontouchstart' in window||navigator.maxTouchPoints>0);},[]);
+  useEffect(()=>{const resize=()=>{const c=canvasRef.current;if(!c)return;c.width=window.innerWidth;c.height=window.innerHeight;};resize();window.addEventListener("resize",resize);return()=>window.removeEventListener("resize",resize);},[]);
+  useEffect(()=>{const kd=e=>{G.current.keys[e.code]=true;if(["Space","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.code))e.preventDefault();};const ku=e=>{G.current.keys[e.code]=false;};window.addEventListener("keydown",kd);window.addEventListener("keyup",ku);return()=>{window.removeEventListener("keydown",kd);window.removeEventListener("keyup",ku);};},[]);
+  useEffect(()=>{const canvas=canvasRef.current;if(!canvas)return;const getPos=t=>{const rect=canvas.getBoundingClientRect(),sx=canvas.width/rect.width,sy=canvas.height/rect.height,cx=(t.clientX-rect.left)*sx,cy=(t.clientY-rect.top)*sy,g=G.current;return{cx,cy,wx:cx+g.cam.x,wy:cy+g.cam.y};};const onStart=e=>{e.preventDefault();const p=getPos(e.touches[0]);const g=G.current;g.touch={active:true,...p};g.ripples.push({cx:p.cx,cy:p.cy,radius:4,life:1});};const onMove=e=>{e.preventDefault();const p=getPos(e.touches[0]);G.current.touch={active:true,...p};};const onEnd=e=>{e.preventDefault();G.current.touch.active=false;};canvas.addEventListener("touchstart",onStart,{passive:false});canvas.addEventListener("touchmove",onMove,{passive:false});canvas.addEventListener("touchend",onEnd,{passive:false});canvas.addEventListener("touchcancel",onEnd,{passive:false});return()=>{canvas.removeEventListener("touchstart",onStart);canvas.removeEventListener("touchmove",onMove);canvas.removeEventListener("touchend",onEnd);canvas.removeEventListener("touchcancel",onEnd);};},[]);
+
+  const handleDonate=()=>{const g=G.current;if(g.logs===0||!g.nearAltar)return;triggerDonate(g,setLogs,setDonated,setDonateAnim);};
+
+  useEffect(()=>{
+    const canvas=canvasRef.current,ctx=canvas.getContext("2d");
+    ctx.imageSmoothingEnabled=false;let lastT=0;
+    const doChop=(nearest,ts,g,player,particles,droppedLogs)=>{g.lastChop=ts;nearest.health--;nearest.chopAnim=10;player.chopAnim=10;player.facing=player.x<nearest.x?"right":"left";for(let i=0;i<6;i++)particles.push({x:nearest.x,y:nearest.y-20,vx:(Math.random()-0.5)*5,vy:-Math.random()*4-1,life:1,size:5+Math.random()*7,color:Math.random()>0.5?"#8b5a35":"#2d6a4f",rot:Math.random()*Math.PI,rotV:(Math.random()-0.5)*0.2});if(nearest.health<=0){nearest.chopped=true;g.logs++;setLogs(g.logs);setLogAnim(a=>a+1);droppedLogs.push({x:nearest.x,y:nearest.y-10,rot:(Math.random()-0.5)*0.8,life:1});for(let i=0;i<14;i++)particles.push({x:nearest.x,y:nearest.y-20,vx:(Math.random()-0.5)*7,vy:-Math.random()*5-2,life:1,size:6+Math.random()*10,color:["#8b5a35","#2d6a4f","#52b788","#c0956a"][Math.floor(Math.random()*4)],rot:Math.random()*Math.PI,rotV:(Math.random()-0.5)*0.3});}};
+    const loop=ts=>{
+      const dt=Math.min(ts-lastT,50);lastT=ts;
+      const g=G.current;const{player,trees,tiles,particles,droppedLogs,donateLogs,keys,touch,ripples,altar}=g;
+      const W=canvas.width,H=canvas.height;
+      let dx=0,dy=0;
+      if(keys["ArrowLeft"]||keys["KeyA"]){dx-=1;player.facing="left";}
+      if(keys["ArrowRight"]||keys["KeyD"]){dx+=1;player.facing="right";}
+      if(keys["ArrowUp"]||keys["KeyW"]){dy-=1;player.facing="up";}
+      if(keys["ArrowDown"]||keys["KeyS"]){dy+=1;player.facing="down";}
+      if(touch.active){const tdx=touch.wx-player.x,tdy=touch.wy-player.y,td=Math.sqrt(tdx*tdx+tdy*tdy);if(td>18){if(!dx&&!dy){dx=tdx/td;dy=tdy/td;}if(Math.abs(tdx)>Math.abs(tdy))player.facing=tdx>0?"right":"left";else player.facing=tdy>0?"down":"up";}}
+      if(dx&&dy){dx*=0.707;dy*=0.707;}
+      if(dx||dy){player.walkTimer+=dt;if(player.walkTimer>85){player.walkFrame++;player.walkTimer=0;}}
+      player.vx=dx*SPEED;player.vy=dy*SPEED;
+      let nx=player.x+player.vx,ny=player.y+player.vy;
+      nx=Math.max(20,Math.min(nx,WORLD_W*TILE-20));ny=Math.max(20,Math.min(ny,WORLD_H*TILE-20));
+      for(const t of trees){if(t.chopped)continue;const dd=Math.sqrt((nx-t.x)**2+(ny-t.y)**2);if(dd<28){const s=28/dd;nx=t.x+(nx-t.x)*s;ny=t.y+(ny-t.y)*s;}}
+      player.x=nx;player.y=ny;
+      const adx=player.x-altar.x,ady=player.y-altar.y,altarDist=Math.sqrt(adx*adx+ady*ady),nowNearAltar=altarDist<DONATE_RANGE;
+      if(g.nearAltar!==nowNearAltar){g.nearAltar=nowNearAltar;setNearAltar(nowNearAltar);}
+      let nearest=null,nearD=Infinity;
+      for(const t of trees){if(t.chopped)continue;const dd=Math.sqrt((player.x-t.x)**2+(player.y-t.y)**2);if(dd<CHOP_RANGE&&dd<nearD){nearD=dd;nearest=t;}}
+      if(g.nearTree!==!!nearest){g.nearTree=!!nearest;setNearTree(!!nearest);}
+      if((keys["Space"]||keys["KeyE"])&&nowNearAltar&&g.logs>0&&ts-g.lastDonate>800){g.lastDonate=ts;triggerDonate(g,setLogs,setDonated,setDonateAnim);}
+      else if(touch.active&&nowNearAltar&&g.logs>0&&ts-g.lastDonate>800&&altarDist<DONATE_RANGE*0.7){g.lastDonate=ts;triggerDonate(g,setLogs,setDonated,setDonateAnim);}
+      else if((keys["Space"]||keys["KeyE"])&&nearest&&ts-g.lastChop>CHOP_COOLDOWN){doChop(nearest,ts,g,player,particles,droppedLogs);}
+      else if(touch.active&&nearest&&!nowNearAltar&&ts-g.lastChop>CHOP_COOLDOWN){doChop(nearest,ts,g,player,particles,droppedLogs);}
+      altar.flare=Math.max(0,altar.flare-dt*0.0008);
+      for(let i=donateLogs.length-1;i>=0;i--){const dl=donateLogs[i];if(dl.delay>0){dl.delay-=dt;continue;}dl.progress+=dt*0.0012;if(dl.progress>=1){donateLogs.splice(i,1);altar.flare=Math.min(1,altar.flare+0.25);for(let j=0;j<8;j++)particles.push({x:altar.x,y:altar.y-20,vx:(Math.random()-0.5)*6,vy:-Math.random()*5-2,life:1,size:4+Math.random()*6,color:["#ff8800","#ffcc00","#ff4400"][Math.floor(Math.random()*3)],rot:0,rotV:(Math.random()-0.5)*0.3});continue;}}
+      if(player.chopAnim>0)player.chopAnim-=dt*0.06;
+      for(const t of trees)if(t.chopAnim>0)t.chopAnim-=dt*0.06;
+      for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.x+=p.vx;p.y+=p.vy;p.vy+=0.18;p.rot+=p.rotV;p.life-=dt/700;if(p.life<=0)particles.splice(i,1);}
+      for(let i=droppedLogs.length-1;i>=0;i--){droppedLogs[i].life-=dt/1200;if(droppedLogs[i].life<=0)droppedLogs.splice(i,1);}
+      g.cam.x+=(player.x-W/2-g.cam.x)*0.1;g.cam.y+=(player.y-H/2-g.cam.y)*0.1;
+      g.cam.x=Math.max(0,Math.min(g.cam.x,WORLD_W*TILE-W));g.cam.y=Math.max(0,Math.min(g.cam.y,WORLD_H*TILE-H));
+      const camX=g.cam.x,camY=g.cam.y;
+      ctx.clearRect(0,0,W,H);
+      drawGrass(ctx,tiles,camX,camY,W,H);
+      if(touch.active&&(Math.abs(touch.wx-player.x)>18||Math.abs(touch.wy-player.y)>18)){ctx.fillStyle="rgba(255,240,80,0.7)";drawTargetMarker(ctx,touch.wx-camX,touch.wy-camY,ts);}
+      if(nowNearAltar){const pulse=0.3+0.2*Math.sin(ts*0.004);ctx.strokeStyle=`rgba(255,160,0,${pulse})`;ctx.lineWidth=2;ctx.setLineDash([6,6]);ctx.beginPath();ctx.arc(altar.x-camX,altar.y-camY,DONATE_RANGE,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);ctx.lineWidth=1;}
+      const renderList=[...trees.map(t=>({k:"tree",t,y:t.y})),{k:"altar",y:altar.y+10},{k:"player",y:player.y}].sort((a,b)=>a.y-b.y);
+      for(const ro of renderList){if(ro.k==="tree"){const t=ro.t,sx=t.x-camX,sy=t.y-camY;if(sx>-120&&sx<W+120&&sy>-180&&sy<H+60)drawTree(ctx,t,camX,camY);}else if(ro.k==="altar"){drawAltar(ctx,altar,camX,camY,ts);}else{drawPlayer(ctx,player.x-camX,player.y-camY,player);}}
+      for(const dl of droppedLogs){const t=1-dl.life,x=dl.x-camX+t*80,y=dl.y-camY-Math.sin(t*Math.PI)*50;ctx.globalAlpha=dl.life;const sc=0.5+dl.life*0.5;ctx.save();ctx.translate(x,y);ctx.scale(sc,sc);drawLog(ctx,0,0,dl.rot);ctx.restore();ctx.globalAlpha=1;}
+      for(const dl of donateLogs){if(dl.delay>0)continue;const t=dl.progress,lx=dl.sx+(altar.x-dl.sx)*t,ly=(dl.sy+(altar.y-24-dl.sy)*t)-Math.sin(t*Math.PI)*dl.height,alpha=t>0.75?(1-t)*4:1;ctx.globalAlpha=Math.max(0,alpha);const sc=0.55+0.1*(1-t);ctx.save();ctx.translate(lx-camX,ly-camY);ctx.scale(sc,sc);drawLog(ctx,0,0,dl.rot+t*3);ctx.restore();ctx.globalAlpha=1;}
+      for(const p of particles){ctx.save();ctx.globalAlpha=p.life*0.85;ctx.translate(p.x-camX,p.y-camY);ctx.rotate(p.rot);ctx.fillStyle=p.color;ctx.fillRect(-p.size/2,-p.size/2,p.size,p.size);ctx.restore();}ctx.globalAlpha=1;
+      if(nearest&&!nearest.chopped){const pulse=0.55+0.45*Math.sin(ts*0.005);ctx.strokeStyle=`rgba(255,240,80,${pulse})`;ctx.lineWidth=2.5;ctx.setLineDash([6,5]);ctx.beginPath();ctx.arc(nearest.x-camX,nearest.y-camY,38,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);ctx.lineWidth=1;}
+      drawRipples(ctx,ripples,dt);
+      animRef.current=requestAnimationFrame(loop);
+    };
+    animRef.current=requestAnimationFrame(loop);
+    return()=>cancelAnimationFrame(animRef.current);
+  },[]);
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"#111a0f",fontFamily:"'Press Start 2P',monospace",touchAction:"none",userSelect:"none"}}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        @keyframes logPop{0%{transform:scale(1)}30%{transform:scale(1.35)}70%{transform:scale(0.95)}100%{transform:scale(1)}}
+        @keyframes logGlow{0%{box-shadow:0 0 0 0 rgba(255,200,60,0)}30%{box-shadow:0 0 20px 8px rgba(255,200,60,0.55)}100%{box-shadow:0 0 0 0 rgba(255,200,60,0)}}
+        @keyframes fireGlow{0%{box-shadow:0 0 0 0 rgba(255,120,0,0)}30%{box-shadow:0 0 24px 8px rgba(255,120,0,0.6)}100%{box-shadow:0 0 0 0 rgba(255,120,0,0)}}
+        @keyframes fadeUp{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-28px)}}
+        @keyframes donateBtn{0%,100%{transform:translateX(-50%) scale(1)}50%{transform:translateX(-50%) scale(1.06)}}
+        .log-pop{animation:logPop 0.5s ease-out}.log-glow{animation:logGlow 0.5s ease-out}.fire-glow{animation:fireGlow 0.6s ease-out}
+      `}</style>
+      <canvas ref={canvasRef} style={{display:"block",width:"100%",height:"100%",imageRendering:"pixelated"}}/>
+      <BackpackUI logs={logs} logAnim={logAnim}/>
+      <DonatedUI donated={donated} donateAnim={donateAnim}/>
+      {nearAltar&&logs>0&&(<button onClick={handleDonate} style={{position:"absolute",bottom:80,left:"50%",transform:"translateX(-50%)",background:"linear-gradient(180deg,#ff9500,#cc5500)",border:"3px solid #ffcc00",borderRadius:10,padding:"12px 24px",color:"#fff5e0",fontSize:isMobile?9:8,cursor:"pointer",fontFamily:"'Press Start 2P',monospace",boxShadow:"0 4px 20px rgba(255,120,0,0.5)",animation:"donateBtn 1s ease-in-out infinite",whiteSpace:"nowrap"}}>🔥 Пожертвовать все бревна</button>)}
+      {nearAltar&&logs===0&&(<div style={{position:"absolute",bottom:80,left:"50%",transform:"translateX(-50%)",background:"rgba(0,0,0,0.65)",border:"2px solid rgba(255,160,0,0.3)",borderRadius:8,padding:"10px 18px",color:"rgba(255,200,100,0.6)",fontSize:8,whiteSpace:"nowrap"}}>🔥 Алтарь рядом — нет бревен</div>)}
+      <HintBar isMobile={isMobile} nearTree={nearTree} nearAltar={nearAltar} logs={logs}/>
+    </div>
+  );
+}
+
+function BackpackUI({logs,logAnim}){const[popping,setPopping]=useState(false);const prev=useRef(logAnim);useEffect(()=>{if(logAnim!==prev.current){prev.current=logAnim;setPopping(true);const t=setTimeout(()=>setPopping(false),500);return()=>clearTimeout(t);}},[logAnim]);return(<div className={popping?"log-glow":""} style={{position:"absolute",top:16,right:16,background:"rgba(20,12,4,0.92)",border:`2.5px solid ${popping?"#ffe050":"#7a4a1e"}`,borderRadius:12,padding:"11px 16px",color:"#f5d89a",transition:"border-color 0.3s",minWidth:100,boxShadow:"0 4px 20px rgba(0,0,0,0.5)"}}><div style={{fontSize:8,opacity:0.65,marginBottom:7,letterSpacing:1}}>🎒 РЮКЗАК</div><div className={popping?"log-pop":""} style={{display:"flex",alignItems:"center",gap:10}}><svg width={30} height={20} viewBox="0 0 32 22"><rect x={2} y={5} width={28} height={12} rx={2} fill="#6b4226"/><rect x={4} y={6} width={24} height={10} rx={1} fill="#8b5a35"/><ellipse cx={3} cy={11} rx={3} ry={8} fill="#c0956a"/><ellipse cx={3} cy={11} rx={2} ry={5} fill="#a07040"/><ellipse cx={29} cy={11} rx={3} ry={8} fill="#c0956a"/><ellipse cx={29} cy={11} rx={2} ry={5} fill="#a07040"/></svg><span style={{fontSize:22,color:"#f5d89a",lineHeight:1}}>×{logs}</span></div>{popping&&<div key={logAnim} style={{position:"absolute",top:-20,right:10,color:"#ffe050",fontSize:9,animation:"fadeUp 0.6s ease-out forwards",pointerEvents:"none"}}>+1</div>}</div>);}
+function DonatedUI({donated,donateAnim}){const[popping,setPopping]=useState(false);const prev=useRef(donateAnim);useEffect(()=>{if(donateAnim!==prev.current){prev.current=donateAnim;setPopping(true);const t=setTimeout(()=>setPopping(false),700);return()=>clearTimeout(t);}},[donateAnim]);return(<div className={popping?"fire-glow":""} style={{position:"absolute",top:16,left:16,background:"rgba(20,8,0,0.92)",border:`2.5px solid ${popping?"#ffaa00":"#6b3a00"}`,borderRadius:12,padding:"11px 16px",color:"#ffd090",transition:"border-color 0.3s",minWidth:100,boxShadow:"0 4px 20px rgba(0,0,0,0.5)"}}><div style={{fontSize:8,opacity:0.65,marginBottom:7,letterSpacing:1}}>🔥 АЛТАРЬ</div><div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:18}}>🪵</span><span style={{fontSize:22,color:"#ffd090",lineHeight:1}}>×{donated}</span></div>{popping&&<div key={donateAnim} style={{position:"absolute",top:-22,left:10,color:"#ffaa00",fontSize:9,animation:"fadeUp 0.7s ease-out forwards",pointerEvents:"none"}}>🔥</div>}</div>);}
+function HintBar({isMobile,nearTree,nearAltar,logs}){let msg;if(nearAltar&&logs>0)msg=isMobile?"👆 Жми кнопку — пожертвовать":"E / Пробел — пожертвовать";else if(nearTree)msg="🪓 Дерево рядом!";else if(isMobile)msg="👆 Тап и держи — идти и рубить";else msg="WASD двигаться · E/Пробел рубить";const accent=nearAltar&&logs>0;return(<div style={{position:"absolute",bottom:16,left:"50%",transform:"translateX(-50%)",background:"rgba(0,0,0,0.65)",border:`1px solid ${accent?"rgba(255,150,0,0.4)":"rgba(255,255,255,0.1)"}`,borderRadius:6,padding:"8px 16px",color:accent?"#ffcc60":"rgba(255,255,255,0.6)",fontSize:7,whiteSpace:"nowrap",pointerEvents:"none",transition:"color 0.3s,border-color 0.3s"}}>{msg}</div>);}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<ForestGame/>);
+</script>
+</body>
+</html>
